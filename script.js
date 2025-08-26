@@ -1,8 +1,8 @@
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-canvas.width = 300;
-canvas.height = 300;
+canvas.width = 200;
+canvas.height = 200;
 
 const camera = {
     position: vec3(0, 0, 30),
@@ -13,6 +13,8 @@ const camera = {
     pitch: 0,
     roll: 0
 };
+
+const origin0 = {x: 0, y: 0, z: 0};
 
 const near = 0.01;
 
@@ -25,7 +27,7 @@ const VERTEX_MODE = false;
 const speed = 1;
 const angleSpeed = 0.05;
 
-const fov = Math.PI/2;
+const fov = 110*Math.PI/180;
 const position = vec3(0,0,0); // whatever man i can make it more sophisticated later
 
 // need to change the architexture but that can wait til later
@@ -35,10 +37,16 @@ const color_buffer = [];
 const depth_buffer = [];
 const pixel_buffer = []; // stores pixel color
 
-// added a fucking s because stupid javascript intellisense has orientation as a depreciated keyword ??
-const orientations = [0,0,0]; // roll, pitch, yaw
+// orientations: yaw, pitch, roll
 
-const objects = [];
+const objects = []; // position: vec3, color: vec3, width: float, height: float, orientation: vec3() (yaw, pitch, roll)
+
+// cube dimensions: [x_size, y_size, z_size]
+// sphere dimensions: [radius, stacks, slices]
+
+function makeObj(position, color, dim, orientation, type) {
+    return {position, color, dim, orientation, type};
+}
 
 let face_vertices = [
     // front face
@@ -73,7 +81,15 @@ let face_vertices = [
     0.5,  -0.5, -0.5,
 ];
 
-function cubeVerticesToTriangle(position, x_size, y_size, z_size, pitch=0, roll=0, yaw=0) {
+function cubeVerticesToTriangle(obj) {
+    let position = obj.position;
+    let x_size = obj.dim.x;
+    let y_size = obj.dim.y;
+    let z_size = obj.dim.z;
+    let yaw = obj.orientation.x;
+    let pitch = obj.orientation.y;
+    let roll = obj.orientation.z;
+
     let vertex_buffer = [];
     for (let i = 0; i < face_vertices.length/12; i++) {
         // order is 0, 1, 2, 2, 3, 0
@@ -83,17 +99,20 @@ function cubeVerticesToTriangle(position, x_size, y_size, z_size, pitch=0, roll=
         let v2 = [x_size*face_vertices[i*12+6], y_size*face_vertices[i*12+7], z_size*face_vertices[i*12+8]];
         let v3 = [x_size*face_vertices[i*12+9], y_size*face_vertices[i*12+10], z_size*face_vertices[i*12+11]];
 
-        v0[0] += position.x;
-        v0[1] += position.y;
-        v0[2] += position.z;
+        let v0_vec = rotateVertex(vec3(v0[0], v0[1], v0[2]), origin0, yaw, pitch, roll);
+        let v1_vec = rotateVertex(vec3(v1[0], v1[1], v1[2]), origin0, yaw, pitch, roll);
+        let v2_vec = rotateVertex(vec3(v2[0], v2[1], v2[2]), origin0, yaw, pitch, roll);
+        let v3_vec = rotateVertex(vec3(v3[0], v3[1], v3[2]), origin0, yaw, pitch, roll);
 
-        v1[0] += position.x;
-        v1[1] += position.y;
-        v1[2] += position.z;
+        v0_vec = vec3add(v0_vec, position);
+        v1_vec = vec3add(v1_vec, position);
+        v2_vec = vec3add(v2_vec, position);
+        v3_vec = vec3add(v3_vec, position);
 
-        v2[0] += position.x;
-        v2[1] += position.y;
-        v2[2] += position.z;
+        v0 = [v0_vec.x, v0_vec.y, v0_vec.z];
+        v1 = [v1_vec.x, v1_vec.y, v1_vec.z];
+        v2 = [v2_vec.x, v2_vec.y, v2_vec.z];
+        v3 = [v3_vec.x, v3_vec.y, v3_vec.z];
 
         vertex_buffer.push(
             ...v0, ...v1, ...v2, // triangle 1
@@ -207,7 +226,7 @@ function matMultVec(mat, v) {
     return vec3(res.data[0], res.data[1], res.data[2]);
 }
 
-function rotateVertex(v, center, pitch, roll, yaw) {
+function rotateVertex(v, center, yaw, pitch, roll) {
     let pitchMat = mat3([
         1,               0,               0,
         0, Math.cos(pitch), -Math.sin(pitch),
@@ -391,6 +410,27 @@ function vertsToTriangles(verts) {
     return arr;
 }
 
+function sphereVerticesToTriangles(obj) {
+    let verts = generateUVSphere(obj.dim.x, obj.dim.y, obj.dim.z);
+    let yaw = obj.orientation.x;
+    let pitch = obj.orientation.y;
+    let roll = obj.orientation.z;
+
+    let vertex_buffer = [];
+    for (let i = 0; i < verts.length / 3; i++) {
+        let v = vec3(verts[i*3+0], verts[i*3+1], verts[i*3+2]);
+
+        // rotate around origin
+        v = rotateVertex(v, origin0, yaw, pitch, roll);
+
+        // translate to obj.position
+        v = vec3add(v, obj.position);
+
+        vertex_buffer.push(v.x, v.y, v.z);
+    }
+    return vertex_buffer;
+}
+
 function flattenY(v) {
     return normalize(vec3(v.x,0,v.z));
 }
@@ -416,8 +456,8 @@ function start() {
     // normal = (v1 - v0) x (v2 - v0)
 
     window.addEventListener("keydown", e => {
-        e.preventDefault();
         let key = e.key.toLowerCase();
+        e.preventDefault();
         if (key === "w") keys.w = true;
         if (key === "a") keys.a = true;
         if (key === "s") keys.s = true;
@@ -431,8 +471,8 @@ function start() {
     });
 
     window.addEventListener("keyup", e => {
-        e.preventDefault();
         let key = e.key.toLowerCase();
+        e.preventDefault();
         if (key === "w") keys.w = false;
         if (key === "a") keys.a = false;
         if (key === "s") keys.s = false;
@@ -445,6 +485,17 @@ function start() {
         if (key === "shift") keys.shift = false;
     });
 
+    // for right now random colors are gonna be just fine
+
+    for (let x = -75; x < 75; x += 15) {
+        for (let z = -75; z < 75; z += 15) {
+            objects.push(makeObj(vec3(x, 0, z), origin0, vec3(10,10,10), vec3(Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI), "cube"));
+        }
+    }
+
+    // sphere
+    objects.push(makeObj(vec3(0,40,0), vec3(1,1,1), vec3(10,10,10), vec3(0,0,0), "sphere"));
+
     color_buffer.push(
         1,0,0,1,0,0,
         0,1,0,0,1,0,
@@ -454,6 +505,12 @@ function start() {
         1,1,0,1,1,0
     );
 
+    for (let i = 0; i < 10; i++) color_buffer.push(...color_buffer);
+
+    for (let i = 0; i < canvas.width * canvas.height; i++) {
+        depth_buffer.push(Infinity); // i = y * WIDTH + x
+    }
+
     requestAnimationFrame(loop);
 }
 
@@ -461,73 +518,105 @@ function loop() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'black';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    let verts = generateUVSphere(15,10,10);
-    let tris = vertsToTriangles(verts);
-
-    let vertex_buffer = cubeVerticesToTriangle(position, 10, 10, 10);
     // let vertex_buffer = tris;
+
+    // clear depth
+    for (let i = 0; i < canvas.width * canvas.height; i++) {
+        depth_buffer[i] = Infinity; // i = y * WIDTH + x
+    }
 
     rotateCameraIncrement(0.00,0.00,0);
 
     cameraControls();
 
-    for (let i = 0; i < vertex_buffer.length/9; i++) {
-        // reminder: normal = normalize((v2 - v0) x (v1 - v0))
+    for (const obj of objects) {
+        let vertex_buffer = obj.type === "cube" ? cubeVerticesToTriangle(obj) : sphereVerticesToTriangles(obj);
+        for (let i = 0; i < vertex_buffer.length/9; i++) {
+            // reminder: normal = normalize((v2 - v0) x (v1 - v0))
 
-        let v0 = vec3(vertex_buffer[i*9+0], vertex_buffer[i*9+1], vertex_buffer[i*9+2]);
-        let v1 = vec3(vertex_buffer[i*9+3], vertex_buffer[i*9+4], vertex_buffer[i*9+5]);
-        let v2 = vec3(vertex_buffer[i*9+6], vertex_buffer[i*9+7], vertex_buffer[i*9+8]);
+            let v0 = vec3(vertex_buffer[i*9+0], vertex_buffer[i*9+1], vertex_buffer[i*9+2]);
+            let v1 = vec3(vertex_buffer[i*9+3], vertex_buffer[i*9+4], vertex_buffer[i*9+5]);
+            let v2 = vec3(vertex_buffer[i*9+6], vertex_buffer[i*9+7], vertex_buffer[i*9+8]);
 
-        // looks like the red face starts bugging out somewhere. figure it out tmr
-        orientations[0] += 0.001;
-        orientations[1] += 0.001;
-        orientations[2] += 0.001;
+            if (obj.type === "cube") {
+                obj.orientation.x += 0.001;
+                obj.orientation.y += 0.001;
+                obj.orientation.z += 0.001;
+            } else {
+                obj.orientation = vec3add(obj.orientation, vec3(0.0001,0.0001,0.0001));
+            }
 
-        v0 = rotateVertex(v0, position, ...orientations);
-        v1 = rotateVertex(v1, position, ...orientations);
-        v2 = rotateVertex(v2, position, ...orientations);
+            // world -> camera local space. use camera basis vectors. 
+            let v0_cam = toCamera(v0);
+            let v1_cam = toCamera(v1);
+            let v2_cam = toCamera(v2);
 
-        // world -> camera local space. use camera basis vectors. 
-        let v0_cam = toCamera(v0);
-        let v1_cam = toCamera(v1);
-        let v2_cam = toCamera(v2);
+            // backface culling must be done is camera space
+            let normal_cam = normalize(vec3cross(vec3sub(v1_cam,v0_cam), vec3sub(v2_cam,v0_cam)));
+            let view_dir = vec3scale(-1, v0_cam); // from triangle to camera
+            if (vec3dot(normal_cam, view_dir) <= 0) continue;
+            // if (normal_cam.z >= 0) continue; // normal facing in +z = we see back of triangle
 
-        // backface culling must be done is camera space
-        let normal_cam = normalize(vec3cross(vec3sub(v1_cam,v0_cam), vec3sub(v2_cam,v0_cam)));
-        let view_dir = vec3scale(-1, v0_cam); // from triangle to camera
-        if (vec3dot(normal_cam, view_dir) <= 0) continue;
-        // if (normal_cam.z >= 0) continue; // normal facing in +z = we see back of triangle
+            // clip near plane
+            if (v0_cam.z <= near || v1_cam.z <= near || v2_cam.z <= near) continue;
 
-        // clip near plane
-        if (v0_cam.z <= near || v1_cam.z <= near || v2_cam.z <= near) continue;
+            // project. also has world space depth
+            const pv0 = projectCam(v0_cam);
+            const pv1 = projectCam(v1_cam);
+            const pv2 = projectCam(v2_cam);
+            if (!pv0 || !pv1 || !pv2) continue; // extra near clipping guard
+            
+            if (VERTEX_MODE) {
+                ctx.fillStyle = 'white';
+                ctx.fillRect(pv0.x-2.5, pv0.y-2.5, 5, 5);
+                ctx.fillRect(pv1.x-2.5, pv1.y-2.5, 5, 5);
+                ctx.fillRect(pv2.x-2.5, pv2.y-2.5, 5, 5);
+            }
+            else {
+                // triangle rasterizer
+                let pixels = getPointsInTriangle(pv0, pv1, pv2);
+                for (let j = 0; j < pixels.length/2; j++) {
+                    let x = pixels[j*2+0];
+                    let y = pixels[j*2+1];
 
-        // project. also has world space depth
-        const pv0 = projectCam(v0_cam);
-        const pv1 = projectCam(v1_cam);
-        const pv2 = projectCam(v2_cam);
-        if (!pv0 || !pv1 || !pv2) continue; // extra near clipping guard
-        
-        if (VERTEX_MODE) {
-            ctx.fillStyle = 'white';
-            ctx.fillRect(pv0.x-2.5, pv0.y-2.5, 5, 5);
-            ctx.fillRect(pv1.x-2.5, pv1.y-2.5, 5, 5);
-            ctx.fillRect(pv2.x-2.5, pv2.y-2.5, 5, 5);
-        }
-        else {
-            // triangle rasterizer
-            let pixels = getPointsInTriangle(pv0, pv1, pv2);
-            for (let j = 0; j < pixels.length/2; j++) {
-                let x = pixels[j*2+0];
-                let y = pixels[j*2+1];
+                    let px = x + 0.5;
+                    let py = y + 0.5;
 
-                let r = color_buffer[i*3+0] * 255;
-                let g = color_buffer[i*3+1] * 255;
-                let b = color_buffer[i*3+2] * 255;
+                    // depth test
+                    let depth = depth_buffer[y * canvas.width + x];
 
-                ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-                // ctx.fillStyle = 'white';
-                ctx.fillRect(x,y,1,1);
+                    // barycentic? idk this is math that i dont feel like doing rn
+                    // chatgpt made this
+                    // use pv0/pv1/pv2 for weights
+                    const x0 = pv0.x, y0 = pv0.y, z0 = pv0.z;
+                    const x1 = pv1.x, y1 = pv1.y, z1 = pv1.z;
+                    const x2 = pv2.x, y2 = pv2.y, z2 = pv2.z;
+
+                    const denom = ((y1 - y2)*(x0 - x2) + (x2 - x1)*(y0 - y2));
+                    if (denom === 0) continue; // degenerate
+
+                    const alpha = ((y1 - y2)*(px - x2) + (x2 - x1)*(py - y2)) / denom;
+                    const beta  = ((y2 - y0)*(px - x2) + (x0 - x2)*(py - y2)) / denom;
+                    const gamma = 1 - alpha - beta;
+
+                    const z = alpha*z0 + beta*z1 + gamma*z2; // this is your depth
+
+                    if (z < depth) {
+                        depth_buffer[y * canvas.width + x] = z;
+
+                        let r = color_buffer[i*3+0] * 255;
+                        let g = color_buffer[i*3+1] * 255;
+                        let b = color_buffer[i*3+2] * 255;
+
+                        // let r = Math.random() * 255;
+                        // let g = Math.random() * 255;
+                        // let b = Math.random() * 255;
+
+                        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                        // ctx.fillStyle = 'white';
+                        ctx.fillRect(x,y,1,1);
+                    }
+                }
             }
         }
     }
