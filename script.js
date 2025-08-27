@@ -1,8 +1,22 @@
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-canvas.width = 200;
-canvas.height = 200;
+let _width = window.innerWidth;
+let _height = window.innerHeight;
+
+let scale = 10;
+
+// const WIDTH = 200;
+// const HEIGHT = 200;
+
+const WIDTH = Math.ceil(window.innerWidth/scale);
+const HEIGHT = Math.ceil(window.innerHeight/scale);
+
+canvas.width = scale * WIDTH;
+canvas.height = scale * HEIGHT;
+
+canvas.style.position = 'absolute';
+canvas.style.top = canvas.style.left = canvas.style.margin = 0;
 
 const camera = {
     position: vec3(0, 0, 30),
@@ -13,6 +27,8 @@ const camera = {
     pitch: 0,
     roll: 0
 };
+
+const lightDir = normalize(vec3(0,-1,0));
 
 const origin0 = {x: 0, y: 0, z: 0};
 
@@ -27,7 +43,7 @@ const VERTEX_MODE = false;
 const speed = 1;
 const angleSpeed = 0.05;
 
-const fov = 110*Math.PI/180;
+const fov = 90*Math.PI/180;
 const position = vec3(0,0,0); // whatever man i can make it more sophisticated later
 
 // need to change the architexture but that can wait til later
@@ -120,6 +136,180 @@ function cubeVerticesToTriangle(obj) {
         );
     }
     return vertex_buffer;
+}
+
+// Tetrahedron
+function tetrahedronVerticesToTriangles(obj) {
+    let { x: x_size, y: y_size, z: z_size } = obj.dim;
+    let yaw = obj.orientation.x;
+    let pitch = obj.orientation.y;
+    let roll = obj.orientation.z;
+    let position = obj.position;
+
+    // base coordinates (before scaling/rotation)
+    let base_vertices = [
+        [ x_size,  y_size,  z_size],
+        [-x_size, -y_size,  z_size],
+        [-x_size,  y_size, -z_size],
+        [ x_size, -y_size, -z_size]
+    ];
+
+    // tetra faces (each is a triangle of indices into base_vertices)
+    let faces = [
+        [0,1,2],
+        [0,3,1],
+        [0,2,3],
+        [1,3,2]
+    ];
+
+    let vertex_buffer = [];
+    for (let face of faces) {
+        let tri = face.map(idx => {
+            let v = base_vertices[idx];
+            let v_rot = rotateVertex(vec3(v[0], v[1], v[2]), origin0, yaw, pitch, roll);
+            v_rot = vec3add(v_rot, position);
+            return [v_rot.x, v_rot.y, v_rot.z];
+        });
+        vertex_buffer.push(...tri[0], ...tri[1], ...tri[2]);
+    }
+    return vertex_buffer;
+}
+
+// Square Pyramid
+function pyramidVerticesToTriangles(obj) {
+    let { x: x_size, y: y_size, z: z_size } = obj.dim;
+    let yaw = obj.orientation.x;
+    let pitch = obj.orientation.y;
+    let roll = obj.orientation.z;
+    let position = obj.position;
+
+    // base + apex
+    let base_vertices = [
+        [-x_size, -y_size, 0],
+        [ x_size, -y_size, 0],
+        [ x_size,  y_size, 0],
+        [-x_size,  y_size, 0],
+    ];
+    let apex = [0, 0, z_size];
+
+    // faces (base as two triangles, 4 sides)
+    let faces = [
+        [0,1,2], [0,2,3], // base
+        [0,1,4],
+        [1,2,4],
+        [2,3,4],
+        [3,0,4]
+    ];
+
+    let all_vertices = [...base_vertices, apex];
+    let vertex_buffer = [];
+    for (let face of faces) {
+        let tri = face.map(idx => {
+            let v = all_vertices[idx];
+            let v_rot = rotateVertex(vec3(v[0], v[1], v[2]), origin0, yaw, pitch, roll);
+            v_rot = vec3add(v_rot, position);
+            return [v_rot.x, v_rot.y, v_rot.z];
+        });
+        vertex_buffer.push(...tri[0], ...tri[1], ...tri[2]);
+    }
+    return vertex_buffer;
+}
+
+// Torus
+function torusVerticesToTriangles(obj) {
+    let { x: R, y: r, z: segments, a: sides } = obj.dim;
+    // R = major radius, r = minor radius
+    // z = segments (around main circle), a = sides (tube subdivisions)
+    let yaw = obj.orientation.x;
+    let pitch = obj.orientation.y;
+    let roll = obj.orientation.z;
+    let position = obj.position;
+
+    let vertex_buffer = [];
+    for (let i = 0; i < segments; i++) {
+        let theta0 = (i / segments) * 2 * Math.PI;
+        let theta1 = ((i + 1) / segments) * 2 * Math.PI;
+
+        for (let j = 0; j < sides; j++) {
+            let phi0 = (j / sides) * 2 * Math.PI;
+            let phi1 = ((j + 1) / sides) * 2 * Math.PI;
+
+            // four corners of the quad
+            let v00 = torusPoint(R, r, theta0, phi0);
+            let v01 = torusPoint(R, r, theta0, phi1);
+            let v10 = torusPoint(R, r, theta1, phi0);
+            let v11 = torusPoint(R, r, theta1, phi1);
+
+            let quad = [v00, v10, v11, v01]; // order
+
+            // apply rotation + position
+            let verts = quad.map(v => {
+                let v_rot = rotateVertex(vec3(v[0], v[1], v[2]), origin0, yaw, pitch, roll);
+                v_rot = vec3add(v_rot, position);
+                return [v_rot.x, v_rot.y, v_rot.z];
+            });
+
+            // split quad into 2 triangles
+            vertex_buffer.push(...verts[0], ...verts[2], ...verts[1]);
+            vertex_buffer.push(...verts[0], ...verts[3], ...verts[2]);
+        }
+    }
+    return vertex_buffer;
+}
+
+function torusPoint(R, r, theta, phi) {
+    let x = (R + r * Math.cos(phi)) * Math.cos(theta);
+    let y = (R + r * Math.cos(phi)) * Math.sin(theta);
+    let z = r * Math.sin(phi);
+    return [x, y, z];
+}
+
+function kleinBottleVerticesToTriangles(obj) {
+    let { x: scale, y: uSeg, z: vSeg } = obj.dim;
+    let { x: yaw, y: pitch, z: roll } = obj.orientation;
+    let position = obj.position;
+
+    let vertex_buffer = [];
+    for (let i = 0; i < uSeg; i++) {
+        let u0 = (i / uSeg) * 2 * Math.PI;
+        let u1 = ((i+1) / uSeg) * 2 * Math.PI;
+        for (let j = 0; j < vSeg; j++) {
+            let v0 = (j / vSeg) * 2 * Math.PI;
+            let v1 = ((j+1) / vSeg) * 2 * Math.PI;
+
+            let p00 = kleinPoint(u0,v0,scale);
+            let p01 = kleinPoint(u0,v1,scale);
+            let p10 = kleinPoint(u1,v0,scale);
+            let p11 = kleinPoint(u1,v1,scale);
+
+            let quad = [p00,p10,p11,p01].map(v => {
+                let v_rot = rotateVertex(vec3(v[0],v[1],v[2]),origin0,yaw,pitch,roll);
+                v_rot = vec3add(v_rot,position);
+                return [v_rot.x,v_rot.y,v_rot.z];
+            });
+
+            vertex_buffer.push(...quad[0],...quad[1],...quad[2]);
+            vertex_buffer.push(...quad[0],...quad[2],...quad[3]);
+        }
+    }
+    return vertex_buffer;
+}
+
+function kleinPoint(u,v,scale) {
+    let x,y,z;
+    if (u < Math.PI) {
+        x = 3*Math.cos(u)*(1+Math.sin(u)) + scale*(Math.cos(v)*Math.cos(u/2));
+        z = -8*Math.sin(u) - scale*(Math.cos(v)*Math.sin(u/2));
+    } else {
+        x = 3*Math.cos(u)*(1+Math.sin(u)) + scale*(Math.cos(v+Math.PI)*Math.cos(u/2));
+        z = -8*Math.sin(u);
+    }
+    y = -scale*Math.sin(v);
+    return [x,y,z];
+}
+
+function vec4(x, y, z, a) {
+    return {x, y, z, a};
 }
 
 function vec3(x=0, y=0, z=0) {
@@ -266,8 +456,8 @@ function getPointsInTriangle(v0, v1, v2) {
     // clamp to screen space
     minX = Math.max(minX, 0);
     minY = Math.max(minY, 0);
-    maxX = Math.min(maxX, canvas.width-1);
-    maxY = Math.min(maxY, canvas.height-1);
+    maxX = Math.min(maxX, WIDTH-1);
+    maxY = Math.min(maxY, HEIGHT-1);
 
     // tweak if right/left are flipped
     function leftSideOfEdge(ax, ay, bx, by, px, py) {
@@ -308,6 +498,9 @@ function axisAngleMatrix(axis, angle) {
 
 /** Camera orientation stored in camera object, this function adds to the orientation data */
 function rotateCameraIncrement(yaw, pitch, roll) {
+    if (camera.pitch + pitch > Math.PI/2) pitch = 0;
+    if (camera.pitch + pitch < -Math.PI/2) pitch = 0;
+    
     camera.yaw += yaw;
     camera.pitch += pitch;
     camera.roll += roll;
@@ -354,10 +547,10 @@ function toCamera(v) {
 // must be in camera space
 function projectCam(v_cam) {
     if (v_cam.z <= near) return null; // extra guard
-    const f = canvas.height / (2 * Math.tan(fov/2));
+    const f = HEIGHT / (2 * Math.tan(fov/2));
     return vec3(
-        (v_cam.x/v_cam.z) * f + canvas.width/2,
-        canvas.height/2 - (v_cam.y / v_cam.z) * f,
+        (v_cam.x/v_cam.z) * f + WIDTH/2,
+        HEIGHT/2 - (v_cam.y / v_cam.z) * f,
         v_cam.z
     );
 }
@@ -486,15 +679,36 @@ function start() {
     });
 
     // for right now random colors are gonna be just fine
-
-    for (let x = -75; x < 75; x += 15) {
-        for (let z = -75; z < 75; z += 15) {
+    
+    // cube
+    for (let x = -75; x < 75; x += 30) {
+        for (let z = -75; z < 75; z += 30) {
             objects.push(makeObj(vec3(x, 0, z), origin0, vec3(10,10,10), vec3(Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI), "cube"));
         }
     }
 
     // sphere
-    objects.push(makeObj(vec3(0,40,0), vec3(1,1,1), vec3(10,10,10), vec3(0,0,0), "sphere"));
+    for (let x = -75; x < 75; x += 30) {
+        for (let z = -75; z < 75; z += 30) {
+            objects.push(makeObj(vec3(175 + x, 0, 175 + z), origin0, vec3(10,10,10), vec3(Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI), "sphere"));
+        }
+    }
+
+    // tetrahedron
+    for (let x = -75; x < 75; x += 30) {
+        for (let z = -75; z < 75; z += 30) {
+            objects.push(makeObj(vec3(x, 0, 175 + z), origin0, vec3(5,5,5), vec3(Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI), "tetrahedron"));
+        }
+    }
+    
+    // torus
+    for (let x = -75; x < 75; x += 30) {
+        for (let z = -75; z < 75; z += 30) {
+            objects.push(makeObj(vec3(175 + x, 0, z), origin0, vec4(5,2.5,20,10), vec3(Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI), "torus"));
+        }
+    }
+
+    // objects.push(makeObj(origin0, origin0, vec3(20,10,5), vec3(0,Math.PI/2,0), "klein"));
 
     color_buffer.push(
         1,0,0,1,0,0,
@@ -505,9 +719,9 @@ function start() {
         1,1,0,1,1,0
     );
 
-    for (let i = 0; i < 10; i++) color_buffer.push(...color_buffer);
+    for (let i = 0; i < 11; i++) color_buffer.push(...color_buffer);
 
-    for (let i = 0; i < canvas.width * canvas.height; i++) {
+    for (let i = 0; i < WIDTH * HEIGHT; i++) {
         depth_buffer.push(Infinity); // i = y * WIDTH + x
     }
 
@@ -516,12 +730,12 @@ function start() {
 
 function loop() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = 'black';
+    ctx.fillStyle = 'darkblue';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     // let vertex_buffer = tris;
 
     // clear depth
-    for (let i = 0; i < canvas.width * canvas.height; i++) {
+    for (let i = 0; i < WIDTH * HEIGHT; i++) {
         depth_buffer[i] = Infinity; // i = y * WIDTH + x
     }
 
@@ -530,7 +744,25 @@ function loop() {
     cameraControls();
 
     for (const obj of objects) {
-        let vertex_buffer = obj.type === "cube" ? cubeVerticesToTriangle(obj) : sphereVerticesToTriangles(obj);
+        let vertex_buffer;
+        switch(obj.type) {
+            case "cube":
+                vertex_buffer = cubeVerticesToTriangle(obj);
+                break;
+            case "sphere":
+                vertex_buffer = sphereVerticesToTriangles(obj);
+                break;
+            case "tetrahedron":
+                vertex_buffer = tetrahedronVerticesToTriangles(obj);
+                break;
+            case "torus":
+                vertex_buffer = torusVerticesToTriangles(obj);
+                break;
+            case "klein":
+                vertex_buffer = kleinBottleVerticesToTriangles(obj);
+                break;
+        }
+        
         for (let i = 0; i < vertex_buffer.length/9; i++) {
             // reminder: normal = normalize((v2 - v0) x (v1 - v0))
 
@@ -538,12 +770,10 @@ function loop() {
             let v1 = vec3(vertex_buffer[i*9+3], vertex_buffer[i*9+4], vertex_buffer[i*9+5]);
             let v2 = vec3(vertex_buffer[i*9+6], vertex_buffer[i*9+7], vertex_buffer[i*9+8]);
 
-            if (obj.type === "cube") {
-                obj.orientation.x += 0.001;
-                obj.orientation.y += 0.001;
-                obj.orientation.z += 0.001;
-            } else {
+            if (obj.type === "sphere" || obj.type === "torus" || obj.type === "klein") {
                 obj.orientation = vec3add(obj.orientation, vec3(0.0001,0.0001,0.0001));
+            } else {
+                obj.orientation = vec3add(obj.orientation, vec3(0.001,0.001,0.001));
             }
 
             // world -> camera local space. use camera basis vectors. 
@@ -583,7 +813,7 @@ function loop() {
                     let py = y + 0.5;
 
                     // depth test
-                    let depth = depth_buffer[y * canvas.width + x];
+                    let depth = depth_buffer[y * WIDTH + x];
 
                     // barycentic? idk this is math that i dont feel like doing rn
                     // chatgpt made this
@@ -602,11 +832,16 @@ function loop() {
                     const z = alpha*z0 + beta*z1 + gamma*z2; // this is your depth
 
                     if (z < depth) {
-                        depth_buffer[y * canvas.width + x] = z;
+                        depth_buffer[y * WIDTH + x] = z;
 
-                        let r = color_buffer[i*3+0] * 255;
-                        let g = color_buffer[i*3+1] * 255;
-                        let b = color_buffer[i*3+2] * 255;
+                        let world_normal = normalize(vec3cross(vec3sub(v1, v0), vec3sub(v2, v0)));
+                        let L = normalize(lightDir); // make sure this is world-space
+                        let ambient = 0.1;
+                        let lightIntensity = ambient + (1 - ambient) * Math.max(0, vec3dot(world_normal, L));
+
+                        let r = color_buffer[i*3+0] * 255 * lightIntensity;
+                        let g = color_buffer[i*3+1] * 255 * lightIntensity;
+                        let b = color_buffer[i*3+2] * 255 * lightIntensity;
 
                         // let r = Math.random() * 255;
                         // let g = Math.random() * 255;
@@ -614,7 +849,7 @@ function loop() {
 
                         ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
                         // ctx.fillStyle = 'white';
-                        ctx.fillRect(x,y,1,1);
+                        ctx.fillRect(scale*x,scale*y,scale,scale);
                     }
                 }
             }
